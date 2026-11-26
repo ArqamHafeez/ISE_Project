@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Add Product · Zain Mart{% endblock %}
+{% block content %}
+<h1>Add product</h1>
+<p class="lede">Owner and salesperson can both enter buying &amp; selling prices. Quantity steps of 0.5.</p>
+<div class="panel" style="max-width:720px">
+  <form method="post" enctype="multipart/form-data" class="grid grid-2">
+    <div class="field">
+      <label>Name</label>
+      <input name="name" required>
+    </div>
+    <div class="field">
+      <label>Acronym</label>
+      <input name="acronym" maxlength="8" required>
+    </div>
+    <div class="field">
+      <label>Product type</label>
+      <select name="category_id" required>
+        {% for c in categories %}<option value="{{ c.id }}">{{ c.id }} — {{ c.name }}</option>{% endfor %}
+      </select>
+      <small>Each product is saved under the selected category. Add new categories from the Owner Categories page.</small>
+    </div>
+    <div class="field">
+      <label>Barcode (6 digits)</label>
+      <input name="barcode" maxlength="6" required pattern="[1-9][0-9]{5}" placeholder="Category ID + 4 digits">
+    </div>
+    <div class="field">
+      <label>Unit</label>
+      <select name="unit">
+        <option value="count">count</option>
+        <option value="weight">weight</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Selling price</label>
+      <input type="number" step="0.01" name="sell_price" required>
+    </div>
+    <div class="field">
+      <label>Buying price</label>
+      <input type="number" step="0.01" name="buy_price" required>
+    </div>
+    <div class="field">
+      <label>Tax</label>
+      <input type="number" step="0.01" name="tax" value="0">
+    </div>
+    <div class="field">
+      <label>Discount / unit</label>
+      <input type="number" step="0.01" name="discount" value="0">
+    </div>
+    <div class="field">
+      <label>Quantity (0.5 steps)</label>
+      <input type="number" step="0.5" min="0" name="qty" value="10" required>
+    </div>
+    <div class="field">
+      <label>Product photo (optional)</label>
+      <input type="file" name="picture" accept="image/*">
+      <small>If no photo is uploaded, an illustration is created from the product name and category.</small>
+    </div>
+    <div class="field" style="grid-column:1/-1">
+      <button class="btn" type="submit">Save product</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

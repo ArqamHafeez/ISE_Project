@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Resume Order {{ order.order_id }} · Zain Mart{% endblock %}
+{% block content %}
+<h1>Resume order {{ order.order_id }}</h1>
+<p class="lede">Customer <strong>{{ order.customer }}</strong> · Status <span class="badge {{ order.status }}">{{ order.status }}</span> · Contact {{ order.contact }}</p>
+
+<div class="panel">
+  {% if can_edit or order.status == 'paid' %}
+  <div class="row" style="justify-content:space-between;margin-bottom:1rem">
+    <strong>Edit this order</strong>
+    {% if order.status == 'paid' %}<span class="muted">Paid orders: 7 days and manager approval required.</span>{% else %}<span class="muted">On-hold and incomplete orders may be edited by a cashier.</span>{% endif %}
+  </div>
+  <div class="table-wrap">
+    <table><thead><tr><th>Product</th><th>Quantity</th><th></th></tr></thead>
+      <tbody id="editOrderRows">
+        {% for it in items %}
+        <tr data-id="{{ it.product_id }}">
+          <td>{{ it.name }}</td>
+          <td><input type="number" min="0.5" step="0.5" value="{{ it.quantity }}" class="edit-qty"></td>
+          <td><button class="btn danger" type="button" onclick="this.closest('tr').remove()">Remove</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="row" style="margin-top:0.8rem">
+    <select id="addProductSelect">{% for p in products if p.qty > 0 %}<option value="{{ p.id }}">{{ p.name }} ({{ p.qty }} available)</option>{% endfor %}</select>
+    <button class="btn ghost" type="button" id="addEditProduct">Add item</button>
+    <button class="btn" type="button" id="saveOrderEdit">Save order changes</button>
+  </div>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Product</th><th>Barcode</th><th>Qty</th><th>Price</th></tr></thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <td>{{ it.name }} ({{ it.acronym }})</td>
+          <td>{{ it.barcode }}</td>
+          <td>{{ it.quantity }}</td>
+          <td>{{ '%.2f'|format(it.unit_price) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if bill %}
+  <p style="margin-top:1rem;font-size:1.2rem;font-weight:800">Payable: {{ '%.2f'|format(bill.payable) }} PKR</p>
+  <a class="btn ghost" href="{{ url_for('bill_print', bill_id=bill.bill_id) }}" target="_blank">Print bill / Save as PDF</a>
+  {% endif %}
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Take payment</h2>
+  <div class="grid grid-2">
+    <div class="field">
+      <label>Payment mode</label>
+      <select id="payMode">
+        <option value="cash">cash</option>
+        <option value="card">card</option>
+        <option value="wallet">wallet</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Merchant</label>
+      <input id="merchant" placeholder="ABL / JazzCash / -">
+    </div>
+    <div class="field">
+      <label>Amount received</label>
+      <input id="received" type="number" step="0.01" value="{{ '%.2f'|format(bill.payable if bill else order.payment_amount) }}">
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <select id="status">
+        <option value="paid">paid</option>
+        <option value="on-hold">on-hold</option>
+        <option value="in-progress">in-progress</option>
+        <option value="archived">archived</option>
+      </select>
+    </div>
+  </div>
+  <button class="btn ember" id="btnPay" type="button">Confirm payment</button>
+  <a class="btn ghost" href="{{ url_for('sales_order') }}">Back</a>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const orderPaid = {{ 'true' if order.status == 'paid' else 'false' }};
+document.getElementById("addEditProduct")?.addEventListener("click", () => {
+  const select = document.getElementById("addProductSelect");
+  if (!select.value) return;
+  const existing = document.querySelector(`#editOrderRows tr[data-id="${select.value}"]`);
+  if (existing) {
+    existing.querySelector(".edit-qty").value = Number(existing.querySelector(".edit-qty").value) + 1;
+    return;
+  }
+  const row = document.createElement("tr");
+  row.dataset.id = select.value;
+  row.innerHTML = `<td>${select.options[select.selectedIndex].text}</td><td><input type="number" min="0.5" step="0.5" value="1" class="edit-qty"></td><td><button class="btn danger" type="button" onclick="this.closest('tr').remove()">Remove</button></td>`;
+  document.getElementById("editOrderRows").appendChild(row);
+});
+document.getElementById("saveOrderEdit")?.addEventListener("click", async () => {
+  const items = [...document.querySelectorAll("#editOrderRows tr")].map(row => ({
+    product_id: row.dataset.id,
+    quantity: Number(row.querySelector(".edit-qty").value),
+  }));
+  const payload = { items };
+  if (orderPaid) {
+    payload.manager_username = prompt("Manager ID approval:");
+    payload.manager_password = prompt("Manager password approval:");
+    if (!payload.manager_username || !payload.manager_password) return;
+  }
+  try {
+    await posFetch("{{ url_for('api_sales_edit', order_id=order.order_id) }}", payload);
+    alert("Order updated.");
+    location.reload();
+  } catch (e) { alert(e.message); }
+});
+document.getElementById("btnPay").onclick = async () => {
+  try {
+    const data = await posFetch("{{ url_for('api_sales_pay', order_id=order.order_id) }}", {
+      payment_mode: document.getElementById("payMode").value,
+      merchant: document.getElementById("merchant").value || "-",
+      amount_received: parseFloat(document.getElementById("received").value) || 0,
+      status: document.getElementById("status").value,
+    });
+    alert(`Updated. Change: ${posFmt(data.change)} PKR`);
+    location.href = "{{ url_for('sales_order') }}";
+  } catch (e) { alert(e.message); }
+};
+</script>
+{% endblock %}
