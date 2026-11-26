@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Barcode Reader · Zain Mart{% endblock %}
+{% block content %}
+<h1>Barcode Reader</h1>
+<p class="lede">Scan with your laptop camera or upload a PNG/JPG. Unrecognised codes stay in scan mode.</p>
+
+<div class="grid grid-2">
+  <div class="panel">
+    <h2>Live camera</h2>
+    <div id="reader"></div>
+    <p class="muted" id="scanStatus" style="margin-top:0.7rem">Starting camera…</p>
+    <form method="post" style="margin-top:1rem" id="codeForm">
+      <div class="field">
+        <label>Or type / paste code</label>
+        <input name="code" id="manualCode" placeholder="6-digit barcode">
+      </div>
+      <button class="btn" type="submit">Lookup</button>
+    </form>
+    <hr style="border:none;border-top:1px solid var(--line);margin:1.2rem 0">
+    <form method="post" enctype="multipart/form-data">
+      <div class="field">
+        <label>Upload barcode image</label>
+        <input type="file" name="image" accept="image/png,image/jpeg">
+      </div>
+      <button class="btn ghost" type="submit">Decode upload</button>
+    </form>
+  </div>
+  <div class="panel">
+    <h2>Product description</h2>
+    {% if product %}
+      <p><strong>ID:</strong> {{ product.id }}</p>
+      <p><strong>Barcode:</strong> {{ product.barcode }}</p>
+      <p><strong>Acronym:</strong> {{ product.acronym }}</p>
+      <p><strong>Name:</strong> {{ product.name }}</p>
+      <p><strong>Unit:</strong> {{ product.unit }}</p>
+      <p><strong>Sell price:</strong> {{ '%.2f'|format(product.sell_price) }} PKR</p>
+      <p><strong>Buy price:</strong> {{ '%.2f'|format(product.buy_price) }} PKR</p>
+      <p><strong>Tax:</strong> {{ '%.2f'|format(product.tax) }} PKR</p>
+      <p><strong>Discount / unit:</strong> {{ '%.2f'|format(product.discount) }} PKR</p>
+      <p><strong>Available:</strong> {% if product.qty > 0 %}{{ product.qty }}{% else %}<span class="low">Out of stock</span>{% endif %}</p>
+      <img src="{{ url_for('serve_barcode', filename=product.barcode ~ '.png') }}" alt="barcode" style="max-width:100%;margin-top:0.8rem;background:#fff;padding:0.8rem;border-radius:12px">
+    {% elif code %}
+      <p class="flash error">Barcode not recognised</p>
+    {% else %}
+      <p class="muted">Scan a product to see its details.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Available products &amp; quantity</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Barcode</th><th>Qty</th><th>Sell</th><th>Buy</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for p in stock_list %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td>{{ p.barcode }}</td>
+          <td>{{ p.qty }}</td>
+          <td>{{ '%.0f'|format(p.sell_price) }}</td>
+          <td>{{ '%.0f'|format(p.buy_price) }}</td>
+          <td>{% if p.qty > 0 %}<span class="badge paid">In stock</span>{% else %}<span class="low">Out of stock</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+  let last = "";
+  let pauseUntil = 0;
+  const statusEl = document.getElementById("scanStatus");
+  const scanner = new Html5Qrcode("reader");
+  scanner.start(
+    { facingMode: "environment" },
+    { fps: 8, qrbox: { width: 250, height: 120 } },
+    async (decoded) => {
+      const now = Date.now();
+      if (now < pauseUntil || decoded === last) return;
+      last = decoded;
+      pauseUntil = now + 2000;
+      statusEl.textContent = "Read: " + decoded + " (paused briefly)";
+      const digits = (decoded.match(/\d{6}/) || [decoded])[0];
+      document.getElementById("manualCode").value = digits;
+      try {
+        const data = await posFetch("{{ url_for('api_scan') }}", { code: digits });
+        statusEl.textContent = data.product.name + " found";
+        setTimeout(() => document.getElementById("codeForm").submit(), 400);
+      } catch (e) {
+        statusEl.textContent = e.message || "Barcode not recognised";
+      }
+    },
+    () => {}
+  ).then(() => {
+    statusEl.textContent = "Camera ready — hold barcode steady.";
+  }).catch(() => {
+    statusEl.textContent = "Camera not found. Use image upload instead.";
+  });
+</script>
+{% endblock %}

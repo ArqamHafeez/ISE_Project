@@ -1,0 +1,730 @@
+{% extends "base.html" %}
+{% block title %}Order Entry · Zain Mart{% endblock %}
+{% block content %}
+<h1>Order Entry</h1>
+<p class="lede">Use one tool at a time: Scan, Manual, Quantity, or Discount — then Total → Payment → Receipt.</p>
+<form method="get" class="panel row" style="align-items:end;margin-bottom:1rem">
+  <div class="field"><label>Open existing order</label><input name="order_id" placeholder="Order ID" required></div>
+  <button class="btn ghost" type="submit">Find order</button>
+  {% if search_order %}<a class="btn" href="{{ url_for('sales_resume', order_id=search_order.order_id) }}">Open {{ search_order.order_id }} ({{ search_order.status }})</a>{% elif request.args.get('order_id') %}<span class="muted">Order not found.</span>{% endif %}
+</form>
+
+<div class="icon-bar">
+  <button class="btn icon" type="button" id="btnScan" data-mode="scan"><span class="glyph">📷</span>Scan</button>
+  <button class="btn icon" type="button" id="btnManual" data-mode="manual"><span class="glyph">⌨️</span>Manual</button>
+  <button class="btn icon" type="button" id="btnQty" data-mode="qty"><span class="glyph">➕</span>Quantity</button>
+  <button class="btn icon" type="button" id="btnDesc" data-mode="desc"><span class="glyph">ℹ️</span>Description</button>
+  <button class="btn icon" type="button" id="btnDisc" data-mode="discount"><span class="glyph">%</span>Discount</button>
+  <button class="btn icon" type="button" id="btnTotal"><span class="glyph">∑</span>Total</button>
+  <button class="btn icon" type="button" id="btnPay"><span class="glyph">💳</span>Payment</button>
+  <button class="btn icon" type="button" id="btnReceipt"><span class="glyph">🧾</span>Receipt</button>
+</div>
+
+<div class="grid grid-2">
+  <div class="panel">
+    <h2 id="modeTitle">Choose a tool above</h2>
+    <p class="muted" id="modeHint">Click Scan, Manual, Quantity, or Discount to open that function only.</p>
+
+    <!-- SCAN ONLY -->
+    <div id="panelScan" class="mode-panel" hidden>
+      <div id="posReader"></div>
+      <p class="muted" id="posScanStatus">Camera starting…</p>
+      <button class="btn ghost" type="button" id="btnStopScan">Stop camera</button>
+      <p class="hint" style="margin-top:0.8rem">Scan adds the product with quantity <strong>1</strong>. Use <strong>Quantity</strong> to change it after.</p>
+    </div>
+
+    <!-- MANUAL ONLY -->
+    <div id="panelManual" class="mode-panel" hidden>
+      <div class="field">
+        <label>Product (id / barcode / name)</label>
+        <input id="searchBox" list="productList" placeholder="Type to search…">
+        <datalist id="productList">
+          {% for p in products %}
+          <option value="{{ p.id }} — {{ p.acronym }} — {{ p.name }} — {{ p.barcode }}"></option>
+          {% endfor %}
+        </datalist>
+      </div>
+      <div class="field">
+        <label>Quantity to add (0.5 steps)</label>
+        <input id="manualQty" type="number" min="0.5" step="0.5" value="1">
+      </div>
+      <button class="btn" type="button" id="btnManualAdd">Add to bill</button>
+    </div>
+
+    <!-- QUANTITY ONLY -->
+    <div id="panelQty" class="mode-panel" hidden>
+      <div class="field">
+        <label>Select line on bill</label>
+        <select id="qtyLineSelect"></select>
+      </div>
+      <div class="field">
+        <label>New quantity (0.5 steps)</label>
+        <input id="qtyNew" type="number" min="0.5" step="0.5" value="1">
+      </div>
+      <button class="btn" type="button" id="btnQtyApply">Update quantity</button>
+      <p class="muted" style="margin-top:0.6rem">This only changes quantity — it does not add a new product.</p>
+    </div>
+
+    <!-- DESCRIPTION ONLY -->
+    <div id="panelDesc" class="mode-panel" hidden>
+      <div id="descBox" class="hint">Scan or add a product first, then open Description.</div>
+    </div>
+
+    <!-- DISCOUNT ONLY -->
+    <div id="panelDiscount" class="mode-panel" hidden>
+      <p class="muted">Product discounts from stock are already included. Here you apply an <strong>extra bill discount</strong>.</p>
+      <div class="field">
+        <label>Discount type</label>
+        <select id="discType">
+          <option value="fixed">Fixed amount (max 8% of bill)</option>
+          <option value="percent">Percent (max 8%)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Discount value</label>
+        <input id="billDisc" type="number" min="0" step="0.01" value="0">
+      </div>
+      <button class="btn ember" type="button" id="btnDiscApply">Apply discount</button>
+      <p id="discResult" class="hint" style="margin-top:0.8rem;display:none"></p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Customer</h2>
+    <div class="field">
+      <label>Name</label>
+      <input id="custName" placeholder="Ali Khan">
+    </div>
+    <div class="field">
+      <label>Contact (optional)</label>
+      <input id="custContact" placeholder="03001234567">
+    </div>
+    <div class="hint" id="liveTotals">
+      Subtotal: <strong id="tSub">0.00</strong><br>
+      Tax: <strong id="tTax">0.00</strong><br>
+      Discount: <strong id="tDisc">0.00</strong><br>
+      Seasonal discount: <strong id="tSeason">0.00</strong><br>
+      <span style="font-size:1.15rem;font-weight:800;color:var(--teal)">Payable: <span id="tPay">0.00</span> PKR</span>
+    </div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Order table</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Acronym</th><th>Name</th><th>Price</th><th>Qty</th><th>Tax</th><th>Unit disc</th><th>Line</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="orderBody"></tbody>
+    </table>
+  </div>
+</div>
+
+{% if hold_orders %}
+<div class="panel" style="margin-top:1rem">
+  <h2>On-hold / counter orders</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Order</th><th>Customer</th><th>Amount</th><th>Mode</th><th></th></tr></thead>
+      <tbody>
+        {% for o in hold_orders %}
+        <tr>
+          <td>{{ o.order_id }}</td>
+          <td>{{ o.customer }}</td>
+          <td>{{ '%.2f'|format(o.payment_amount) }}</td>
+          <td>{{ o.payment_mode }}</td>
+          <td><a class="btn ghost" href="{{ url_for('sales_resume', order_id=o.order_id) }}">Resume / Pay</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div id="actionMsg" class="flash" style="display:none;margin-top:1rem"></div>
+
+<div id="totalPanel" class="panel" style="display:none;margin-top:1rem;border:2px solid var(--teal)">
+  <h2>∑ Bill total</h2>
+  <p id="totalPanelBody" class="hint">Add products first, then press Total.</p>
+  <button class="btn" type="button" id="btnTotalToPay">Go to Payment</button>
+</div>
+
+<div id="payModal" class="panel" style="display:none;margin-top:1rem;border:2px solid var(--ember)">
+  <h2>💳 Customer payment</h2>
+  <p id="payEmptyMsg" class="flash error" style="display:none">Add products to the bill before payment.</p>
+  <div id="payFormWrap">
+    <div class="grid grid-2">
+      <div class="field">
+        <label>Payable (PKR)</label>
+        <input id="payAmount" readonly>
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="payStatus">
+          <option value="paid">paid</option>
+          <option value="on-hold">on-hold</option>
+          <option value="in-progress">in-progress</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Payment mode</label>
+        <select id="payMode">
+          <option value="cash">cash</option>
+          <option value="card">card</option>
+          <option value="wallet">wallet</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Merchant</label>
+        <input id="payMerchant" placeholder="ABL / JazzCash / -" value="-">
+      </div>
+      <div class="field">
+        <label>Amount received</label>
+        <input id="payReceived" type="number" min="0" step="0.01">
+      </div>
+      <div class="field">
+        <label>Change due</label>
+        <input id="payChange" readonly value="0.00">
+      </div>
+    </div>
+    <button class="btn ghost" id="btnQuickHold" type="button">Put on hold</button>
+    <button class="btn ember" type="button" id="btnConfirmPay">Confirm &amp; generate bill</button>
+  </div>
+</div>
+
+<div id="receiptPanel" class="panel" style="display:none;margin-top:1rem;border:2px solid var(--teal)">
+  <h2>🧾 Receipt</h2>
+  <p id="receiptEmptyMsg" class="muted">No receipt yet — complete a payment first.</p>
+  <pre class="receipt-box" id="receiptText" style="display:none"></pre>
+  <a class="btn" id="receiptLink" href="#" target="_blank" style="display:none">Open saved receipt</a>
+  <a class="btn ghost" id="billPrintLink" href="#" target="_blank" style="display:none">Print / Save bill as PDF</a>
+  <button class="btn ghost" type="button" id="btnPrintReceipt" style="display:none">Print</button>
+</div>
+
+<script type="application/json" id="productData">{{ products | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  .mode-panel[hidden] { display: none !important; }
+  .btn.icon.active-mode {
+    background: var(--teal);
+    color: #fff;
+    border-color: var(--teal);
+  }
+</style>
+<script>
+window.posFmt = window.posFmt || ((n) => Number(n || 0).toFixed(2));
+window.posFetch = window.posFetch || (async (url, body) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({ ok: false, message: "Server error — please login again on sales portal." }));
+  if (!res.ok || data.ok === false) throw new Error(data.message || "Request failed");
+  return data;
+});
+
+const PRODUCTS = JSON.parse(document.getElementById("productData").textContent);
+let cart = [];
+let selected = null;
+let lastCalc = null;
+let lastResult = null;
+let scanner = null;
+let currentMode = null;
+
+function showMsg(text, ok) {
+  const el = document.getElementById("actionMsg");
+  el.style.display = "block";
+  el.className = "flash " + (ok ? "success" : "error");
+  el.textContent = text;
+  el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function hideCheckoutPanels() {
+  document.getElementById("totalPanel").style.display = "none";
+  document.getElementById("payModal").style.display = "none";
+  document.getElementById("receiptPanel").style.display = "none";
+}
+
+const TITLES = {
+  scan: ["Scan product", "Camera only — barcode scan adds the item."],
+  manual: ["Manual entry", "Type/search a product and add it to the bill."],
+  qty: ["Change quantity", "Pick a bill line and set a new quantity (0.5 steps)."],
+  desc: ["Product description", "Details of the last scanned/selected product."],
+  discount: ["Bill discount", "Apply one extra discount on the whole bill."],
+};
+
+function findProduct(q) {
+  q = (q || "").toLowerCase().trim();
+  if (!q) return null;
+  const idPart = q.split("—")[0].trim();
+  return PRODUCTS.find(p =>
+    p.id === idPart || p.barcode === q || (p.acronym || "").toLowerCase() === q ||
+    (p.name || "").toLowerCase().includes(q) || (`${p.id}` === q)
+  ) || PRODUCTS.find(p => `${p.id} — ${p.acronym} — ${p.name} — ${p.barcode}`.toLowerCase() === q);
+}
+
+function showDesc(p) {
+  const box = document.getElementById("descBox");
+  if (!p) {
+    box.innerHTML = "No product selected yet.";
+    return;
+  }
+  const stock = Number(p.qty) <= 0 ? "<span class='low'>Out of stock</span>" : p.qty;
+  box.innerHTML = `<strong>${p.name}</strong><br>
+    ID ${p.id} · Barcode ${p.barcode} · ${p.unit}<br>
+    Sell ${posFmt(p.sell_price || p.price)} · Buy ${posFmt(p.buy_price || 0)}<br>
+    Tax ${posFmt(p.tax)} · Unit discount ${posFmt(p.discount)} · Stock ${stock}`;
+}
+
+async function stopScanner() {
+  if (!scanner) return;
+  try { await scanner.stop(); } catch (e) {}
+  try { scanner.clear(); } catch (e) {}
+  scanner = null;
+  document.getElementById("posScanStatus").textContent = "Camera off";
+}
+
+async function startScanner() {
+  await stopScanner();
+  const status = document.getElementById("posScanStatus");
+  const el = document.getElementById("posReader");
+  el.innerHTML = "";
+  scanner = new Html5Qrcode("posReader");
+  let last = "", pauseUntil = 0;
+  try {
+    await scanner.start(
+      { facingMode: "environment" },
+      { fps: 8, qrbox: { width: 250, height: 100 } },
+      async (decoded) => {
+        const now = Date.now();
+        if (now < pauseUntil || decoded === last) return;
+        last = decoded;
+        pauseUntil = now + 2000;
+        const digits = (decoded.match(/\d{6}/) || [decoded])[0];
+        try {
+          const data = await posFetch("{{ url_for('api_scan') }}", { code: digits });
+          if (Number(data.product.qty) <= 0) {
+            status.textContent = data.product.name + " — Out of stock";
+            return;
+          }
+          selected = data.product;
+          addToCart(data.product, 1, false);
+          status.textContent = "Scanned & added: " + data.product.name + " (qty 1)";
+          showDesc(data.product);
+        } catch (e) {
+          status.textContent = e.message || "Barcode not recognised";
+        }
+      },
+      () => {}
+    );
+    status.textContent = "Camera ready — hold barcode steady.";
+  } catch (e) {
+    status.textContent = "Camera not found. Use Manual entry instead.";
+  }
+}
+
+function hideAllPanels() {
+  document.querySelectorAll(".mode-panel").forEach(p => p.hidden = true);
+  document.querySelectorAll(".btn.icon[data-mode]").forEach(b => b.classList.remove("active-mode"));
+}
+
+async function setMode(mode) {
+  if (currentMode === "scan" && mode !== "scan") await stopScanner();
+  currentMode = mode;
+  hideAllPanels();
+  const btn = document.querySelector(`.btn.icon[data-mode="${mode}"]`);
+  if (btn) btn.classList.add("active-mode");
+  const [title, hint] = TITLES[mode] || ["Tool", ""];
+  document.getElementById("modeTitle").textContent = title;
+  document.getElementById("modeHint").textContent = hint;
+
+  if (mode === "scan") {
+    document.getElementById("panelScan").hidden = false;
+    await startScanner();
+  } else if (mode === "manual") {
+    document.getElementById("panelManual").hidden = false;
+    document.getElementById("searchBox").focus();
+  } else if (mode === "qty") {
+    document.getElementById("panelQty").hidden = false;
+    refreshQtySelect();
+  } else if (mode === "desc") {
+    document.getElementById("panelDesc").hidden = false;
+    showDesc(selected);
+  } else if (mode === "discount") {
+    document.getElementById("panelDiscount").hidden = false;
+    document.getElementById("billDisc").focus();
+  }
+}
+
+function addToCart(product, qty, askNext) {
+  if (!product) { alert("Select a product first"); return false; }
+  if (Number(product.qty) <= 0) { alert("Out of stock"); return false; }
+  qty = parseFloat(qty);
+  if (!(qty > 0)) { alert("Enter quantity"); return false; }
+  if (Math.abs(Math.round(qty / 0.5) * 0.5 - qty) > 0.001) {
+    alert("Quantity must use 0.5 steps (1, 1.5, 2…)");
+    return false;
+  }
+  if (qty > Number(product.qty)) {
+    alert(`Insufficient stock. Available: ${product.qty}`);
+    return false;
+  }
+  const existing = cart.find(c => c.product_id === product.id);
+  if (existing) {
+    if (existing.quantity + qty > Number(product.qty)) {
+      alert(`Insufficient stock. Available: ${product.qty}`);
+      return false;
+    }
+    existing.quantity = Math.round((existing.quantity + qty) * 2) / 2;
+  } else {
+    cart.push({
+      product_id: product.id,
+      barcode: product.barcode,
+      acronym: product.acronym,
+      name: product.name,
+      unit: product.unit,
+      unit_price: product.price,
+      unit_discount: product.discount,
+      tax: product.tax,
+      quantity: qty,
+      available: product.qty,
+    });
+  }
+  selected = product;
+  renderCart();
+  calcTotals();
+  if (askNext && confirm("Add next product?")) {
+    document.getElementById("searchBox").value = "";
+    document.getElementById("manualQty").value = "1";
+    document.getElementById("searchBox").focus();
+  }
+  return true;
+}
+
+function refreshQtySelect() {
+  const sel = document.getElementById("qtyLineSelect");
+  sel.innerHTML = "";
+  if (!cart.length) {
+    sel.innerHTML = "<option value=''>No items on bill</option>";
+    return;
+  }
+  cart.forEach((it, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = `${it.acronym} — ${it.name} (now ${it.quantity})`;
+    sel.appendChild(opt);
+  });
+  document.getElementById("qtyNew").value = cart[0].quantity;
+}
+
+function renderCart() {
+  const body = document.getElementById("orderBody");
+  body.innerHTML = "";
+  cart.forEach((it, idx) => {
+    const line = (it.unit_price - it.unit_discount) * it.quantity + it.tax * it.quantity;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${it.acronym}</td><td>${it.name}</td><td>${posFmt(it.unit_price)}</td>
+      <td>${it.quantity}</td>
+      <td>${posFmt(it.tax)}</td><td>${posFmt(it.unit_discount)}</td><td>${posFmt(line)}</td>
+      <td><button class="btn ghost" data-rm="${idx}" type="button">Remove</button></td>`;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => {
+    cart.splice(+b.dataset.rm, 1);
+    renderCart();
+    calcTotals();
+    if (currentMode === "qty") refreshQtySelect();
+  });
+  if (currentMode === "qty") refreshQtySelect();
+}
+
+async function calcTotals() {
+  if (!cart.length) {
+    ["tSub","tTax","tDisc","tSeason","tPay"].forEach(id => document.getElementById(id).textContent = "0.00");
+    lastCalc = null;
+    return null;
+  }
+  const data = await posFetch("{{ url_for('api_sales_calc') }}", {
+    items: cart.map(c => ({ product_id: c.product_id, quantity: c.quantity })),
+    bill_discount: parseFloat(document.getElementById("billDisc").value) || 0,
+    discount_type: document.getElementById("discType").value,
+  });
+  lastCalc = data.calc;
+  document.getElementById("tSub").textContent = posFmt(data.calc.total_without_tax);
+  document.getElementById("tTax").textContent = posFmt(data.calc.total_tax);
+  document.getElementById("tDisc").textContent = posFmt(data.calc.total_discount);
+  document.getElementById("tSeason").textContent = posFmt(data.calc.seasonal_discount);
+  document.getElementById("tPay").textContent = posFmt(data.calc.payable);
+  return data.calc;
+}
+
+document.querySelectorAll(".btn.icon[data-mode]").forEach(btn => {
+  btn.onclick = () => setMode(btn.dataset.mode);
+});
+
+document.getElementById("btnStopScan").onclick = () => stopScanner();
+
+document.getElementById("btnManualAdd").onclick = () => {
+  const p = findProduct(document.getElementById("searchBox").value);
+  if (!p) { alert("Product not found"); return; }
+  selected = p;
+  addToCart(p, document.getElementById("manualQty").value, true);
+};
+
+document.getElementById("searchBox").addEventListener("change", () => {
+  const p = findProduct(document.getElementById("searchBox").value);
+  if (p) {
+    selected = p;
+    showDesc(p);
+  }
+});
+
+document.getElementById("qtyLineSelect").onchange = () => {
+  const i = parseInt(document.getElementById("qtyLineSelect").value, 10);
+  if (!isNaN(i) && cart[i]) document.getElementById("qtyNew").value = cart[i].quantity;
+};
+
+document.getElementById("btnQtyApply").onclick = async () => {
+  if (!cart.length) { alert("Bill is empty"); return; }
+  const i = parseInt(document.getElementById("qtyLineSelect").value, 10);
+  const qty = parseFloat(document.getElementById("qtyNew").value);
+  if (isNaN(i) || !cart[i]) { alert("Select a bill line"); return; }
+  if (!(qty > 0) || Math.abs(Math.round(qty / 0.5) * 0.5 - qty) > 0.001) {
+    alert("Quantity must use 0.5 steps");
+    return;
+  }
+  if (qty > Number(cart[i].available)) {
+    alert(`Insufficient stock. Available: ${cart[i].available}`);
+    return;
+  }
+  cart[i].quantity = qty;
+  renderCart();
+  await calcTotals();
+  alert(`Quantity updated to ${qty}`);
+};
+
+document.getElementById("btnDiscApply").onclick = async () => {
+  if (!cart.length) { alert("Add products before discount"); return; }
+  const val = parseFloat(document.getElementById("billDisc").value);
+  if (isNaN(val) || val < 0) { alert("Enter a valid discount"); return; }
+  try {
+    const calc = await calcTotals();
+    const box = document.getElementById("discResult");
+    box.style.display = "block";
+    const type = document.getElementById("discType").value;
+    box.innerHTML = `Discount applied (${type}: ${val}).<br>
+      Unit discounts + bill discount = <strong>${posFmt(calc.total_discount)}</strong> PKR<br>
+      New payable = <strong>${posFmt(calc.payable)}</strong> PKR`;
+  } catch (e) {
+    alert(e.message);
+  }
+};
+
+async function openTotalPanel() {
+  hideCheckoutPanels();
+  const panel = document.getElementById("totalPanel");
+  const body = document.getElementById("totalPanelBody");
+  panel.style.display = "block";
+  try {
+    const calc = await calcTotals();
+    if (!calc) {
+      body.innerHTML = "<span class='low'>Bill is empty.</span> Use <strong>Manual</strong> or <strong>Scan</strong> to add products first.";
+      showMsg("Add products before Total.", false);
+      panel.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    body.innerHTML = `
+      Without tax: <strong>${posFmt(calc.total_without_tax)}</strong> PKR<br>
+      Tax: <strong>${posFmt(calc.total_tax)}</strong> PKR<br>
+      Discount: <strong>${posFmt(calc.total_discount)}</strong> PKR<br>
+      <span style="font-size:1.35rem;font-weight:800;color:var(--teal)">Payable: ${posFmt(calc.payable)} PKR</span>`;
+    showMsg("Total calculated.", true);
+  } catch (e) {
+    body.textContent = e.message;
+    showMsg(e.message, false);
+  }
+  panel.scrollIntoView({ behavior: "smooth" });
+}
+
+async function openPaymentPanel() {
+  hideCheckoutPanels();
+  const panel = document.getElementById("payModal");
+  const empty = document.getElementById("payEmptyMsg");
+  const form = document.getElementById("payFormWrap");
+  panel.style.display = "block";
+  try {
+    const calc = await calcTotals();
+    if (!calc) {
+      empty.style.display = "block";
+      form.style.display = "none";
+      showMsg("Add products before Payment.", false);
+      panel.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    if (!document.getElementById("custName").value.trim()) {
+      document.getElementById("custName").value = "Walk In";
+    }
+    empty.style.display = "none";
+    form.style.display = "block";
+    document.getElementById("payAmount").value = posFmt(calc.payable);
+    document.getElementById("payReceived").value = posFmt(calc.payable);
+    document.getElementById("payChange").value = "0.00";
+    showMsg("Payment panel opened — confirm when ready.", true);
+  } catch (e) {
+    empty.style.display = "block";
+    empty.textContent = e.message;
+    form.style.display = "none";
+    showMsg(e.message, false);
+  }
+  panel.scrollIntoView({ behavior: "smooth" });
+}
+
+function openReceiptPanel() {
+  hideCheckoutPanels();
+  const panel = document.getElementById("receiptPanel");
+  panel.style.display = "block";
+  if (!lastResult) {
+    document.getElementById("receiptEmptyMsg").style.display = "block";
+    document.getElementById("receiptText").style.display = "none";
+    document.getElementById("receiptLink").style.display = "none";
+    document.getElementById("btnPrintReceipt").style.display = "none";
+    showMsg("Complete a payment first to get a receipt.", false);
+  } else {
+    showReceipt(lastResult);
+  }
+  panel.scrollIntoView({ behavior: "smooth" });
+}
+
+document.getElementById("btnTotal").addEventListener("click", (e) => {
+  e.preventDefault();
+  openTotalPanel();
+});
+document.getElementById("btnPay").addEventListener("click", (e) => {
+  e.preventDefault();
+  openPaymentPanel();
+});
+document.getElementById("btnReceipt").addEventListener("click", (e) => {
+  e.preventDefault();
+  openReceiptPanel();
+});
+document.getElementById("btnTotalToPay").addEventListener("click", () => openPaymentPanel());
+
+document.getElementById("payReceived").addEventListener("input", () => {
+  const payable = parseFloat(document.getElementById("payAmount").value) || 0;
+  const recv = parseFloat(document.getElementById("payReceived").value) || 0;
+  document.getElementById("payChange").value = posFmt(Math.max(0, recv - payable));
+});
+
+document.getElementById("btnConfirmPay").addEventListener("click", async () => {
+  const btn = document.getElementById("btnConfirmPay");
+  btn.disabled = true;
+  btn.textContent = "Saving…";
+  try {
+    if (!cart.length) throw new Error("Add products first");
+    const customer = document.getElementById("custName").value.trim() || "Walk In";
+    const data = await posFetch("{{ url_for('api_sales_complete') }}", {
+      items: cart.map(c => ({ product_id: c.product_id, quantity: c.quantity })),
+      bill_discount: parseFloat(document.getElementById("billDisc").value) || 0,
+      discount_type: document.getElementById("discType").value || "fixed",
+      customer: customer,
+      contact: document.getElementById("custContact").value.trim() || "-",
+      status: document.getElementById("payStatus").value,
+      payment_mode: document.getElementById("payMode").value,
+      merchant: document.getElementById("payMerchant").value.trim() || "-",
+      amount_received: parseFloat(document.getElementById("payReceived").value) || 0,
+    });
+
+    document.getElementById("btnQuickHold").addEventListener("click", async () => {
+      if (!cart.length) { showMsg("Add products before putting an order on hold.", false); return; }
+      try {
+        await posFetch("{{ url_for('api_sales_complete') }}", {
+          items: cart.map(c => ({ product_id: c.product_id, quantity: c.quantity })),
+          bill_discount: parseFloat(document.getElementById("billDisc").value) || 0,
+          discount_type: document.getElementById("discType").value || "fixed",
+          customer: document.getElementById("custName").value.trim() || "Walk In",
+          contact: document.getElementById("custContact").value.trim() || "-",
+          status: "on-hold", payment_mode: "cash", merchant: "-", amount_received: 0,
+        });
+        location.reload();
+      } catch (e) { showMsg(e.message || "Could not put order on hold.", false); }
+    });
+    lastResult = data;
+    showMsg(`Bill ${data.bill.bill_id} saved. Change: ${posFmt(data.change)} PKR`, true);
+    cart = [];
+    selected = null;
+    document.getElementById("billDisc").value = "0";
+    renderCart();
+    await calcTotals();
+    showReceipt(data);
+  } catch (e) {
+    showMsg(e.message || "Payment failed", false);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Confirm & generate bill";
+  }
+});
+
+function showReceipt(data) {
+  const panel = document.getElementById("receiptPanel");
+  panel.style.display = "block";
+  document.getElementById("receiptEmptyMsg").style.display = "none";
+  const pre = document.getElementById("receiptText");
+  const link = document.getElementById("receiptLink");
+  const printBtn = document.getElementById("btnPrintReceipt");
+  const billLink = document.getElementById("billPrintLink");
+  pre.style.display = "block";
+  link.style.display = "inline-flex";
+  printBtn.style.display = "inline-flex";
+  const b = data.bill, o = data.order, c = data.calc;
+  let lines = [
+    "==========================================",
+    "           Zain Mart POS",
+    "==========================================",
+    `Bill ID   : ${b.bill_id}`,
+    `Order ID  : ${b.order_id}`,
+    `Date/Time : ${o.date} ${o.time}`,
+    `Customer  : ${b.customer}`,
+    "------------------------------------------",
+  ];
+  (c.items || []).forEach(it => {
+    lines.push(`${String(it.acronym || "").padEnd(10)} x${it.quantity}  ${posFmt(it.line_payable)}`);
+  });
+  lines = lines.concat([
+    "------------------------------------------",
+    `Subtotal  : ${posFmt(c.total_without_tax)}`,
+    `Tax       : ${posFmt(c.total_tax)}`,
+    `Discount  : ${posFmt(c.total_discount)}`,
+    `PAYABLE   : ${posFmt(c.payable)} PKR`,
+    `Payment   : ${o.payment_mode} ${o.merchant || ""}`,
+    `Status    : ${b.status}`,
+    "==========================================",
+    "        Thank you for shopping!",
+    "==========================================",
+  ]);
+  pre.textContent = lines.join("\n");
+  link.href = data.receipt_url || "#";
+  billLink.href = data.bill_print_url || "#";
+  billLink.style.display = data.bill_print_url ? "inline-flex" : "none";
+  panel.scrollIntoView({ behavior: "smooth" });
+}
+
+document.getElementById("btnPrintReceipt").addEventListener("click", () => {
+  const text = document.getElementById("receiptText").textContent;
+  const w = window.open("", "_blank");
+  if (!w) { showMsg("Allow popups to print.", false); return; }
+  w.document.write(`<pre style="font:14px monospace;padding:24px">${text.replace(/</g,"&lt;")}</pre>`);
+  w.document.close();
+  w.focus();
+  w.print();
+});
+</script>
+{% endblock %}
